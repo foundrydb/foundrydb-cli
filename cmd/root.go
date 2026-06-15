@@ -55,6 +55,7 @@ func init() {
 
 	rootCmd.AddCommand(authCmd)
 	rootCmd.AddCommand(servicesCmd)
+	rootCmd.AddCommand(appServiceCmd)
 	rootCmd.AddCommand(orgCmd)
 	rootCmd.AddCommand(usersCmd)
 	rootCmd.AddCommand(backupsCmd)
