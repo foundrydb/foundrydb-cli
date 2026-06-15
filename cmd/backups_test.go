@@ -124,7 +124,7 @@ func TestRunBackupsList_JSONOut(t *testing.T) {
 
 func TestRunBackupsTrigger_Success(t *testing.T) {
 	svc := sampleService()
-	triggerResp := foundrydb.Backup{ID: "bkp-new-001", Status: foundrydb.BackupStatusPending}
+	triggerResp := map[string]string{"backup_id": "bkp-new-001", "status": "pending"}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/managed-services/", func(w http.ResponseWriter, r *http.Request) {
@@ -153,7 +153,7 @@ func TestRunBackupsTrigger_Success(t *testing.T) {
 
 func TestRunBackupsTrigger_JSONOut(t *testing.T) {
 	svc := sampleService()
-	triggerResp := foundrydb.Backup{ID: "bkp-new-001", Status: foundrydb.BackupStatusPending}
+	triggerResp := map[string]string{"backup_id": "bkp-new-001", "status": "pending"}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/managed-services/", func(w http.ResponseWriter, r *http.Request) {

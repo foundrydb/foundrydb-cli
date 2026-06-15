@@ -261,6 +261,77 @@ fdb metrics my-postgres
 fdb metrics my-postgres --json
 ```
 
+### App Services
+
+```bash
+# List all app services
+fdb apps list
+
+# Get details of an app service
+fdb apps get <id-or-name>
+
+# Create an app service
+fdb apps create --name my-app --image registry.example.com/myapp:latest --port 8080 --plan tier-2 --zone se-sto1
+
+# Delete an app service (prompts for name confirmation)
+fdb apps delete <id>
+
+# Restart an app service
+fdb apps restart <id>
+
+# Retrieve logs
+fdb apps logs <id> --lines 200
+```
+
+### App Custom Domains
+
+```bash
+# List custom domains for an app service
+fdb apps domains list <app-id>
+
+# Add a custom domain (starts in pending_verification status)
+fdb apps domains add <app-id> --domain app.example.com
+
+# Trigger an immediate verification pass for a pending domain
+fdb apps domains verify <app-id> <domain-id>
+
+# Remove a custom domain
+fdb apps domains remove <app-id> <domain-id>
+```
+
+After adding a domain, point a DNS CNAME record at the `CNAME target` shown in the output. Then call `verify` to kick off the certificate issuance without waiting for the background worker.
+
+### App Edge Settings
+
+```bash
+# Show edge status (enabled, home PoP, per-PoP convergence)
+fdb apps edge status <app-id>
+
+# Add a cache rule for a path prefix
+fdb apps edge update-settings <app-id> --cache-path-prefix /static --cache-ttl 86400
+
+# Set a rate limit (keyed by IP)
+fdb apps edge update-settings <app-id> --rate-limit-rps 100 --rate-limit-burst 200 --rate-limit-key ip
+
+# Enable WAF detect mode
+fdb apps edge update-settings <app-id> --waf-mode detect
+
+# Disable WAF
+fdb apps edge update-settings <app-id> --waf-mode off
+
+# Combine multiple settings in one call
+fdb apps edge update-settings <app-id> \
+  --cache-path-prefix /api \
+  --cache-ttl 60 \
+  --rate-limit-rps 50 \
+  --rate-limit-burst 100 \
+  --waf-mode detect
+
+# Output as JSON
+fdb apps edge status <app-id> --json
+fdb apps edge update-settings <app-id> --waf-mode off --json
+```
+
 ## Examples
 
 ### Full workflow: create and connect

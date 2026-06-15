@@ -170,8 +170,8 @@ func TestRunServicesList_JSONOut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// SDK encodes Service.ID as "uuid"
-	if !strings.Contains(out, `"uuid"`) {
+	// SDK encodes Service.ID as "id"
+	if !strings.Contains(out, `"id"`) {
 		t.Errorf("expected JSON output with 'uuid' field, got: %q", out)
 	}
 }
@@ -262,7 +262,7 @@ func TestRunServicesGet_JSONOut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(out, `"uuid"`) {
+	if !strings.Contains(out, `"id"`) {
 		t.Errorf("expected JSON output with 'uuid' field, got: %q", out)
 	}
 }
@@ -418,7 +418,7 @@ func TestRunServicesCreate_JSONOut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(out, `"uuid"`) {
+	if !strings.Contains(out, `"id"`) {
 		t.Errorf("expected JSON output with 'uuid' field, got: %q", out)
 	}
 }
