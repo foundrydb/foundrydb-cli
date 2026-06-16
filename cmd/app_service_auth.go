@@ -70,6 +70,24 @@ to the backing database's primary VM and applied in the customer's _mdb_auth sch
 	RunE: runAppServiceAuthRevokeSession,
 }
 
+var appServiceAuthEraseUserCmd = &cobra.Command{
+	Use:   "erase-user <app-id>",
+	Short: "Erase one end-user (GDPR right to erasure)",
+	Long: `Erases one end-user under the GDPR right to erasure (Art. 17).
+
+The erasure removes the user and all associated identity data (identities,
+sessions, refresh tokens, MFA enrolments, pending login and OAuth tokens)
+and scrubs the user's audit-log rows from the customer's _mdb_auth schema.
+
+Provide exactly one of --email or --user-id to identify the end-user.
+The erasure is dispatched asynchronously to the backing database's primary VM;
+the command prints the task ID for status polling.
+
+The email address is never persisted or logged on the controller side.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runAppServiceAuthEraseUser,
+}
+
 func init() {
 	// enable flags: required fields
 	appServiceAuthEnableCmd.Flags().String("attachment-id", "", "UUID of the app's PostgreSQL attachment to back the identity store (required)")
@@ -102,12 +120,17 @@ func init() {
 			"May be specified multiple times. Example:\n"+
 			"  --idp-provider google:my-client-id:my-secret:'Sign in with Google'")
 
+	// erase-user flags: exactly one of --email or --user-id is required
+	appServiceAuthEraseUserCmd.Flags().String("email", "", "Email address of the end-user to erase (mutually exclusive with --user-id)")
+	appServiceAuthEraseUserCmd.Flags().String("user-id", "", "Auth subject UUID of the end-user to erase (mutually exclusive with --email)")
+
 	// Wire the subcommands
 	appServiceAuthCmd.AddCommand(appServiceAuthEnableCmd)
 	appServiceAuthCmd.AddCommand(appServiceAuthGetCmd)
 	appServiceAuthCmd.AddCommand(appServiceAuthDisableCmd)
 	appServiceAuthCmd.AddCommand(appServiceAuthRotateKeyCmd)
 	appServiceAuthCmd.AddCommand(appServiceAuthRevokeSessionCmd)
+	appServiceAuthCmd.AddCommand(appServiceAuthEraseUserCmd)
 
 	appServiceCmd.AddCommand(appServiceAuthCmd)
 }
@@ -299,6 +322,41 @@ func runAppServiceAuthRevokeSession(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Session %s revoked for app service %s (revocation dispatched).\n", sessionID, appID)
+	return nil
+}
+
+func runAppServiceAuthEraseUser(cmd *cobra.Command, args []string) error {
+	appID := args[0]
+
+	email, _ := cmd.Flags().GetString("email")
+	userID, _ := cmd.Flags().GetString("user-id")
+
+	if email == "" && userID == "" {
+		return fmt.Errorf("exactly one of --email or --user-id is required")
+	}
+	if email != "" && userID != "" {
+		return fmt.Errorf("--email and --user-id are mutually exclusive: provide exactly one")
+	}
+
+	req := foundrydb.DeleteAppServiceAuthUserRequest{
+		Email:  email,
+		UserID: userID,
+	}
+
+	client := newClient()
+	ctx := context.Background()
+	taskID, err := client.DeleteAppServiceAuthUser(ctx, appID, req)
+	if err != nil {
+		return err
+	}
+
+	if jsonOut {
+		return printJSON(map[string]string{"task_id": taskID})
+	}
+
+	fmt.Printf("Erasure dispatched for app service %s\n", appID)
+	fmt.Printf("Task ID: %s\n", taskID)
+	fmt.Printf("\nThe erasure runs asynchronously on the backing database VM.\n")
 	return nil
 }
 
