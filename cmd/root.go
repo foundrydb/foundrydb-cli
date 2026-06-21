@@ -69,6 +69,7 @@ func init() {
 	rootCmd.AddCommand(queuesCmd)
 	rootCmd.AddCommand(complianceCmd)
 	rootCmd.AddCommand(attachmentCmd)
+	rootCmd.AddCommand(stackCmd)
 }
 
 func initConfig() {
