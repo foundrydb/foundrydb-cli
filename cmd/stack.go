@@ -37,15 +37,17 @@ var stackPreviewCmd = &cobra.Command{
 }
 
 var stackLaunchCmd = &cobra.Command{
-	Use:   "launch <template>",
+	Use:   "launch [template]",
 	Short: "Launch a stack from a template",
-	Long: `Launch a stack from a catalog template.
+	Long: `Launch a stack from a catalog template or a marketplace template ID.
+
+Exactly one of the positional template name or --template-id must be supplied.
 
 The command previews the monthly cost, then prompts for confirmation unless
 --yes is given. The previewed cost is passed to the API as the accepted
 monthly cost gate; the launch is rejected if prices change by more than $0.01
 between the preview and the provisioning call.`,
-	Args: cobra.ExactArgs(1),
+	Args: cobra.MaximumNArgs(1),
 	RunE: runStackLaunch,
 }
 
@@ -80,6 +82,7 @@ func init() {
 	stackLaunchCmd.Flags().String("name", "", "Name for the launched stack (required)")
 	stackLaunchCmd.Flags().String("org", "", "Organization ID to scope the stack to")
 	stackLaunchCmd.Flags().Bool("yes", false, "Accept the previewed cost automatically without an interactive prompt")
+	stackLaunchCmd.Flags().String("template-id", "", "Marketplace template UUID (alternative to positional template name)")
 
 	stackDeleteCmd.Flags().Bool("yes", false, "Skip confirmation prompt")
 
@@ -90,6 +93,8 @@ func init() {
 	stackCmd.AddCommand(stackGetCmd)
 	stackCmd.AddCommand(stackDeleteCmd)
 	stackCmd.AddCommand(stackRetryCmd)
+	stackCmd.AddCommand(stackTemplateCmd)
+	stackCmd.AddCommand(stackUpgradeCmd)
 }
 
 func runStackTemplates(cmd *cobra.Command, args []string) error {
@@ -154,11 +159,22 @@ func runStackPreview(cmd *cobra.Command, args []string) error {
 }
 
 func runStackLaunch(cmd *cobra.Command, args []string) error {
-	templateName := args[0]
-
 	name, _ := cmd.Flags().GetString("name")
 	orgID, _ := cmd.Flags().GetString("org")
 	autoYes, _ := cmd.Flags().GetBool("yes")
+	templateID, _ := cmd.Flags().GetString("template-id")
+
+	// Resolve template: positional arg takes priority, then --template-id.
+	var templateName string
+	if len(args) > 0 {
+		templateName = args[0]
+	}
+	if templateName == "" && templateID == "" {
+		return fmt.Errorf("supply a template name as a positional argument or --template-id <uuid>")
+	}
+	if templateName != "" && templateID != "" {
+		return fmt.Errorf("supply either a positional template name or --template-id, not both")
+	}
 
 	if name == "" {
 		fmt.Print("Stack name: ")
@@ -171,8 +187,16 @@ func runStackLaunch(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("stack name is required (use --name)")
 	}
 
-	client := newClient()
 	ctx := context.Background()
+
+	// When launching from a marketplace template ID we use direct HTTP because
+	// the SDK v0.7.0 StackLaunchRequest only carries TemplateName. The Phase 2
+	// SDK (v0.8.0) adds SourceTemplateID; until it is vendored we post directly.
+	if templateID != "" {
+		return stackLaunchFromTemplateID(ctx, name, templateID, orgID, autoYes)
+	}
+
+	client := newClient()
 
 	fmt.Printf("Fetching cost preview for template %q...\n", templateName)
 	preview, err := client.PreviewStackCost(ctx, foundrydb.StackPreviewRequest{
@@ -211,6 +235,78 @@ func runStackLaunch(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Launching stack %q from template %q...\n", name, templateName)
 	stack, err := client.LaunchStack(ctx, req)
 	if err != nil {
+		return err
+	}
+
+	if jsonOut {
+		return printJSON(stack)
+	}
+
+	fmt.Printf("Stack launched successfully.\n")
+	fmt.Printf("  ID:       %s\n", stack.ID)
+	fmt.Printf("  Name:     %s\n", stack.Name)
+	fmt.Printf("  Template: %s\n", stack.TemplateName)
+	fmt.Printf("  Status:   %s\n", stack.Status)
+	fmt.Printf("\nUse 'fdb stack get %s' to monitor provisioning progress.\n", stack.ID)
+	return nil
+}
+
+// stackLaunchFromTemplateID handles the --template-id path via direct HTTP so
+// the CLI builds cleanly against SDK v0.7.0 while targeting the Phase 2 launch
+// body that carries source_template_id.
+func stackLaunchFromTemplateID(ctx context.Context, name, templateID, orgIDOverride string, autoYes bool) error {
+	// Fetch a cost preview for the marketplace template.
+	fmt.Printf("Fetching cost preview for marketplace template %q...\n", templateID)
+	var preview stackMktCostPreview
+	if err := stackDoGet("/stacks/templates/"+templateID+"/preview", &preview); err != nil {
+		return fmt.Errorf("preview cost: %w", err)
+	}
+
+	fmt.Printf("\nCost preview for marketplace template %q (%s)\n\n", templateID, preview.Currency)
+	tbl := newStackTable([]string{"RESOURCE", "KIND", "DESCRIPTION", "MONTHLY COST"})
+	for _, item := range preview.LineItems {
+		cs := fmt.Sprintf("$%.2f", item.MonthlyCost)
+		if item.IsCeiling {
+			cs += " (max)"
+		}
+		tbl.Append([]string{item.SymbolicName, item.Kind, item.Description, cs})
+	}
+	tbl.Render()
+	fmt.Printf("\nTotal: $%.2f/mo\n", preview.MonthlyTotal)
+
+	if !autoYes {
+		fmt.Printf("\nEstimated monthly cost: $%.2f/mo\n", preview.MonthlyTotal)
+		fmt.Print("Accept and launch? [y/N]: ")
+		scanner := bufio.NewScanner(os.Stdin)
+		if scanner.Scan() {
+			answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
+			if answer != "y" && answer != "yes" {
+				fmt.Println("Launch cancelled.")
+				return nil
+			}
+		} else {
+			return fmt.Errorf("no input received; launch cancelled")
+		}
+	}
+
+	type mktLaunchReq struct {
+		Name                string  `json:"name"`
+		SourceTemplateID    string  `json:"source_template_id"`
+		OrganizationID      string  `json:"organization_id,omitempty"`
+		AcceptedMonthlyCost float64 `json:"accepted_monthly_cost"`
+	}
+	body := mktLaunchReq{
+		Name:                name,
+		SourceTemplateID:    templateID,
+		AcceptedMonthlyCost: preview.MonthlyTotal,
+	}
+	if orgIDOverride != "" {
+		body.OrganizationID = orgIDOverride
+	}
+
+	fmt.Printf("Launching stack %q from marketplace template %q...\n", name, templateID)
+	var stack stackMktStack
+	if err := stackDoPost("/stacks", body, &stack); err != nil {
 		return err
 	}
 
