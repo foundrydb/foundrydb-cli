@@ -332,6 +332,41 @@ fdb apps edge status <app-id> --json
 fdb apps edge update-settings <app-id> --waf-mode off --json
 ```
 
+### Compliance
+
+Generate and download signed compliance evidence packets for SOC2 or GDPR Article 30 (Records of Processing Activities).
+
+```bash
+# Generate a SOC2 evidence packet for an organization
+fdb compliance generate --org <org-id> --framework soc2
+
+# Generate a GDPR Art. 30 ROPA report
+fdb compliance generate --org <org-id> --framework gdpr_ropa
+
+# List all reports for an organization
+fdb compliance list --org <org-id>
+
+# List as JSON
+fdb compliance list --org <org-id> --json
+
+# Download a report as JSON (to stdout)
+fdb compliance download --org <org-id> --report <report-id>
+
+# Download a report as JSON to a file
+fdb compliance download --org <org-id> --report <report-id> --out report.json
+
+# Download the PDF variant
+fdb compliance download --org <org-id> --report <report-id> --pdf --out report.pdf
+
+# List published Ed25519 signing keys (for signature verification)
+fdb compliance keys
+
+# Output signing keys as JSON
+fdb compliance keys --json
+```
+
+The `--org` flag may be omitted when the `--org` global flag or `FDB_ORG` environment variable is already set.
+
 ## Examples
 
 ### Full workflow: create and connect

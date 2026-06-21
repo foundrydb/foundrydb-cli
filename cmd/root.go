@@ -67,6 +67,7 @@ func init() {
 	rootCmd.AddCommand(appsCmd)
 	rootCmd.AddCommand(jobsCmd)
 	rootCmd.AddCommand(queuesCmd)
+	rootCmd.AddCommand(complianceCmd)
 }
 
 func initConfig() {
