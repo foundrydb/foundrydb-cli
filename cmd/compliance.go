@@ -52,6 +52,18 @@ type complianceSigningKeysResponse struct {
 	Keys []complianceSigningKey `json:"keys"`
 }
 
+type complianceSubscription struct {
+	Framework       string  `json:"framework"`
+	Enabled         bool    `json:"enabled"`
+	MonthlyPriceEUR float64 `json:"monthly_price_eur"`
+	SubscribedAt    *string `json:"subscribed_at,omitempty"`
+	CanceledAt      *string `json:"canceled_at,omitempty"`
+}
+
+type complianceSubscriptionsResponse struct {
+	Subscriptions []complianceSubscription `json:"subscriptions"`
+}
+
 // ---------------------------------------------------------------------------
 // Command tree
 // ---------------------------------------------------------------------------
@@ -85,6 +97,38 @@ var complianceKeysCmd = &cobra.Command{
 	RunE:  runComplianceKeys,
 }
 
+// subscriptions subcommand group
+var complianceSubscriptionsCmd = &cobra.Command{
+	Use:   "subscriptions",
+	Short: "Manage compliance framework subscriptions",
+}
+
+var complianceSubscriptionsListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List compliance framework subscriptions for an organization",
+	RunE:  runComplianceSubscriptionsList,
+}
+
+var complianceSubscribeCmd = &cobra.Command{
+	Use:   "subscribe <framework>",
+	Short: "Subscribe to a compliance framework for an organization",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runComplianceSubscribe,
+}
+
+var complianceUnsubscribeCmd = &cobra.Command{
+	Use:   "unsubscribe <framework>",
+	Short: "Unsubscribe from a compliance framework for an organization",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runComplianceUnsubscribe,
+}
+
+var complianceRotateSigningKeyCmd = &cobra.Command{
+	Use:   "rotate-signing-key",
+	Short: "Rotate the active compliance signing key (admin only)",
+	RunE:  runComplianceRotateSigningKey,
+}
+
 func init() {
 	// generate flags
 	complianceGenerateCmd.Flags().String("org", "", "Organization UUID or slug (required)")
@@ -99,10 +143,24 @@ func init() {
 	complianceDownloadCmd.Flags().Bool("pdf", false, "Download PDF variant instead of JSON")
 	complianceDownloadCmd.Flags().StringP("out", "o", "", "Output file path (defaults to stdout)")
 
+	// subscriptions list flags
+	complianceSubscriptionsListCmd.Flags().String("org", "", "Organization UUID or slug (required)")
+
+	// subscriptions subscribe/unsubscribe flags
+	complianceSubscribeCmd.Flags().String("org", "", "Organization UUID or slug (required)")
+	complianceUnsubscribeCmd.Flags().String("org", "", "Organization UUID or slug (required)")
+
+	// wire subscriptions subcommands
+	complianceSubscriptionsCmd.AddCommand(complianceSubscriptionsListCmd)
+	complianceSubscriptionsCmd.AddCommand(complianceSubscribeCmd)
+	complianceSubscriptionsCmd.AddCommand(complianceUnsubscribeCmd)
+
 	complianceCmd.AddCommand(complianceGenerateCmd)
 	complianceCmd.AddCommand(complianceListCmd)
 	complianceCmd.AddCommand(complianceDownloadCmd)
 	complianceCmd.AddCommand(complianceKeysCmd)
+	complianceCmd.AddCommand(complianceSubscriptionsCmd)
+	complianceCmd.AddCommand(complianceRotateSigningKeyCmd)
 }
 
 // ---------------------------------------------------------------------------
@@ -298,6 +356,173 @@ func runComplianceKeys(cmd *cobra.Command, args []string) error {
 	}
 	table.Render()
 	fmt.Printf("\nTotal: %d key(s)\n", len(resp.Keys))
+	return nil
+}
+
+func runComplianceSubscriptionsList(cmd *cobra.Command, args []string) error {
+	org, _ := cmd.Flags().GetString("org")
+	if org == "" {
+		org = viper.GetString("org")
+		if orgID != "" {
+			org = orgID
+		}
+	}
+	if org == "" {
+		return fmt.Errorf("--org is required")
+	}
+
+	var resp complianceSubscriptionsResponse
+	if err := complianceGet(fmt.Sprintf("/organizations/%s/compliance-subscriptions", org), &resp); err != nil {
+		return err
+	}
+
+	if jsonOut {
+		return printJSON(resp)
+	}
+
+	if len(resp.Subscriptions) == 0 {
+		fmt.Println("No compliance subscriptions found.")
+		return nil
+	}
+
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"FRAMEWORK", "ENABLED", "MONTHLY PRICE (EUR)"})
+	table.SetBorder(false)
+	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
+	table.SetAlignment(tablewriter.ALIGN_LEFT)
+	table.SetCenterSeparator("")
+	table.SetColumnSeparator("  ")
+	table.SetRowSeparator("")
+	table.SetHeaderLine(false)
+	table.SetTablePadding("  ")
+	table.SetNoWhiteSpace(true)
+
+	for _, s := range resp.Subscriptions {
+		enabled := "no"
+		if s.Enabled {
+			enabled = "yes"
+		}
+		price := fmt.Sprintf("%.2f", s.MonthlyPriceEUR)
+		table.Append([]string{s.Framework, enabled, price})
+	}
+	table.Render()
+	return nil
+}
+
+func runComplianceSubscribe(cmd *cobra.Command, args []string) error {
+	framework := args[0]
+	org, _ := cmd.Flags().GetString("org")
+	if org == "" {
+		org = viper.GetString("org")
+		if orgID != "" {
+			org = orgID
+		}
+	}
+	if org == "" {
+		return fmt.Errorf("--org is required")
+	}
+
+	var resp complianceSubscriptionsResponse
+	path := fmt.Sprintf("/organizations/%s/compliance-subscriptions/%s", org, framework)
+	data, err := complianceDoRequest("PUT", path, nil)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+
+	if jsonOut {
+		return printJSON(resp)
+	}
+
+	fmt.Printf("Subscribed to framework %q.\n", framework)
+	return runComplianceSubscriptionsList(cmd, args[:0])
+}
+
+func runComplianceUnsubscribe(cmd *cobra.Command, args []string) error {
+	framework := args[0]
+	org, _ := cmd.Flags().GetString("org")
+	if org == "" {
+		org = viper.GetString("org")
+		if orgID != "" {
+			org = orgID
+		}
+	}
+	if org == "" {
+		return fmt.Errorf("--org is required")
+	}
+
+	var resp complianceSubscriptionsResponse
+	path := fmt.Sprintf("/organizations/%s/compliance-subscriptions/%s", org, framework)
+	data, err := complianceDoRequest("DELETE", path, nil)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+
+	if jsonOut {
+		return printJSON(resp)
+	}
+
+	fmt.Printf("Unsubscribed from framework %q.\n", framework)
+	return runComplianceSubscriptionsList(cmd, args[:0])
+}
+
+func runComplianceRotateSigningKey(cmd *cobra.Command, args []string) error {
+	var resp complianceSigningKeysResponse
+	data, err := complianceDoRequest("POST", "/admin/compliance/signing-keys/rotate", nil)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+
+	if jsonOut {
+		return printJSON(resp)
+	}
+
+	if len(resp.Keys) == 0 {
+		fmt.Println("Signing key rotated. No keys returned.")
+		return nil
+	}
+
+	fmt.Println("Signing key rotated. Current key set:")
+
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"KEY ID", "ALGORITHM", "ACTIVE", "CREATED AT", "EXPIRES AT"})
+	table.SetBorder(false)
+	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
+	table.SetAlignment(tablewriter.ALIGN_LEFT)
+	table.SetCenterSeparator("")
+	table.SetColumnSeparator("  ")
+	table.SetRowSeparator("")
+	table.SetHeaderLine(false)
+	table.SetTablePadding("  ")
+	table.SetNoWhiteSpace(true)
+
+	for _, k := range resp.Keys {
+		active := "no"
+		if k.Active {
+			active = "yes"
+		}
+		createdAt := k.CreatedAt
+		if len(createdAt) > 19 {
+			createdAt = createdAt[:19]
+		}
+		expiresAt := "-"
+		if k.ExpiresAt != "" {
+			expiresAt = k.ExpiresAt
+			if len(expiresAt) > 19 {
+				expiresAt = expiresAt[:19]
+			}
+		}
+		table.Append([]string{k.KeyID, k.Algorithm, active, createdAt, expiresAt})
+	}
+	table.Render()
 	return nil
 }
 

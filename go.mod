@@ -3,7 +3,7 @@ module github.com/anorph/foundrydb-cli
 go 1.26.1
 
 require (
-	github.com/anorph/foundrydb-sdk-go v0.7.0
+	github.com/anorph/foundrydb-sdk-go v0.8.1-0.20260622163200-4273658428d3
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
